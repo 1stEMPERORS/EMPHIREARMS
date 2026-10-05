@@ -3,13 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>Catalog — EMPHIREARMS</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="style.css">
+  <script>
+  // Always fetch a fresh copy of the stylesheet on every page load
+  document.write('<link rel="stylesheet" href="style.css?v=' + Date.now() + '">');
+</script>
+<noscript><link rel="stylesheet" href="style.css"></noscript>
 </head>
 
 <body class="page-catalog">
@@ -32,8 +39,9 @@
 
 <div class="page-head">
   <div class="wrap">
-    <span class="tag">Full Inventory</span>
-    <h1>Catalog</h1>
+    <span class="tag" id="pageTag">Full Inventory</span>
+    <h1 id="pageTitle">Catalog</h1>
+    <div class="filters" id="filters"></div>
   </div>
 </div>
 
@@ -43,17 +51,29 @@
   <div class="grid" id="grid" style="display:none;"></div>
 </main>
 
-<footer>
-  Prototype demo — checkout is not connected to real payment.
-</footer>
-
 <script>
   // =========================================================
   // GOOGLE SHEETS CONFIG
   // =========================================================
 
   const SHEET_ID = "1n_DzAbTaOSeER8H_eTRhymuwwSvFFkMZ7H1FrZko1jw";
-  const SHEET_NAME = "Sheet1";
+
+  // One tab (sheet) per category.
+  //   key   -> what goes after ?category= in the URL
+  //   tab   -> the EXACT name of the tab at the bottom of your Google Sheet
+  //   label -> what shows on the page
+  //   sku   -> prefix for the SKU label
+  const CATEGORIES = [
+    { key: "airsoft",     tab: "Airsoft Guns", label: "Airsoft Guns", sku: "AIR" },
+    { key: "gear",        tab: "Gear",         label: "Gear",         sku: "GEAR" },
+    { key: "emps",        tab: "EMPS Vision",  label: "EMPS Vision",  sku: "EMPS" },
+    { key: "accessories", tab: "Accessories",  label: "Accessories",  sku: "ACC" }
+  ];
+
+  // catalog.html?category=gear  -> only Gear
+  // catalog.html                -> everything
+  const requestedKey = new URLSearchParams(location.search).get("category");
+  const activeCategory = CATEGORIES.find(c => c.key === requestedKey) || null;
 
 
   // =========================================================
@@ -62,6 +82,32 @@
 
   const statusEl = document.getElementById("status");
   const gridEl = document.getElementById("grid");
+
+
+  // =========================================================
+  // IMAGE URL CLEANUP
+  // Turns the things people paste into a sheet into a real image URL
+  // =========================================================
+
+  function resolveImageUrl(raw) {
+    let url = String(raw || "").trim();
+    if (!url) return "";
+
+    // =IMAGE("https://...") formula text
+    const formula = url.match(/^=?IMAGE\(\s*"([^"]+)"/i);
+    if (formula) url = formula[1];
+
+    // Google Drive share links -> direct thumbnail
+    // (the normal share link is a web page, not an image, so <img> can't show it)
+    const drive =
+      url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/) ||
+      url.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:[^#]*&)?id=([^&#]+)/);
+    if (drive) {
+      return `https://drive.google.com/thumbnail?id=${drive[1]}&sz=w1000`;
+    }
+
+    return url;
+  }
 
 
   // =========================================================
@@ -82,194 +128,167 @@
 
 
   // =========================================================
-  // LOAD PRODUCTS
+  // LOAD ONE SHEET TAB
+  // =========================================================
+
+  async function loadCategory(category) {
+
+    const url =
+      `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(category.tab)}`;
+
+    const response = await fetch(url, { cache: "no-store" });
+
+    if (!response.ok) {
+      throw new Error(
+        `"${category.tab}": Google Sheets returned HTTP ${response.status}.`
+      );
+    }
+
+    const text = await response.text();
+
+    // Google wraps the JSON in: google.visualization.Query.setResponse(...)
+    const match = text.match(
+      /google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/
+    );
+
+    if (!match) {
+      console.error("Google response:", text);
+      throw new Error(`"${category.tab}": could not read the Google Sheets response.`);
+    }
+
+    const json = JSON.parse(match[1]);
+
+    // If a tab name doesn't exist, Google quietly returns the FIRST tab
+    // instead of an error, so also check for explicit error status.
+    if (json.status === "error") {
+      const msg = (json.errors && json.errors[0] && json.errors[0].detailed_message) || "unknown error";
+      throw new Error(`"${category.tab}": ${msg}`);
+    }
+
+    if (!json.table || !json.table.rows || !json.table.cols || json.table.cols.length === 0) {
+      throw new Error(`"${category.tab}": the tab has no table data.`);
+    }
+
+    const headers = json.table.cols.map(col =>
+      String(col.label || "").trim().toLowerCase()
+    );
+
+    const idx = {
+      image: headers.indexOf("image"),
+      name: headers.indexOf("name"),
+      description: headers.indexOf("description"),
+      price: headers.indexOf("price")
+    };
+
+    if (idx.name === -1 || idx.price === -1) {
+      throw new Error(
+        `"${category.tab}": couldn't find Name and Price columns. Detected headers: ${headers.join(", ") || "(none — is row 1 blank?)"}`
+      );
+    }
+
+    return json.table.rows
+      .map((row, index) => {
+
+        function get(columnIndex) {
+          if (columnIndex === -1 || !row.c || !row.c[columnIndex]) return "";
+          const cell = row.c[columnIndex];
+          // for images prefer the raw value (v); for others the formatted one (f)
+          return columnIndex === idx.image
+            ? (cell.v ?? cell.f ?? "")
+            : (cell.f ?? cell.v ?? "");
+        }
+
+        const price = parseFloat(String(get(idx.price)).replace(/[^0-9.-]/g, ""));
+
+        return {
+          sku: `${category.sku}-${String(index + 1).padStart(3, "0")}`,
+          category: category.key,
+          image: resolveImageUrl(get(idx.image)),
+          name: String(get(idx.name)).trim(),
+          description: String(get(idx.description)).trim(),
+          price: Number.isFinite(price) ? price : 0
+        };
+      })
+      .filter(product => product.name !== "");
+  }
+
+
+  // =========================================================
+  // FILTER BAR + PAGE TITLE
+  // =========================================================
+
+  function setupHeader() {
+
+    const links = [
+      `<a href="catalog.html" class="${activeCategory ? "" : "active"}">All</a>`
+    ].concat(
+      CATEGORIES.map(c =>
+        `<a href="catalog.html?category=${c.key}" class="${activeCategory === c ? "active" : ""}">${escapeHtml(c.label)}</a>`
+      )
+    );
+
+    document.getElementById("filters").innerHTML = links.join("");
+
+    if (activeCategory) {
+      document.getElementById("pageTitle").textContent = activeCategory.label;
+      document.getElementById("pageTag").textContent = "Category";
+      document.title = `${activeCategory.label} — EMPHIREARMS`;
+    }
+  }
+
+
+  // =========================================================
+  // LOAD PRODUCTS (one category, or all four)
   // =========================================================
 
   async function loadProducts() {
 
     statusEl.classList.remove("error");
+    statusEl.style.display = "";
+    gridEl.style.display = "none";
     statusEl.textContent = "Loading products from Google Sheets...";
 
-    const url =
-      `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
+    const toLoad = activeCategory ? [activeCategory] : CATEGORIES;
 
     try {
 
-      const response = await fetch(url);
+      // load all needed tabs at the same time
+      const results = await Promise.allSettled(toLoad.map(loadCategory));
 
-      if (!response.ok) {
-        throw new Error(
-          `Google Sheets returned HTTP ${response.status}.`
-        );
-      }
+      const products = [];
+      const errors = [];
 
-      const text = await response.text();
-
-      // Google wraps the JSON response in:
-      // google.visualization.Query.setResponse(...)
-      const match = text.match(
-        /google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/
-      );
-
-      if (!match) {
-        console.error("Google response:", text);
-
-        throw new Error(
-          "Could not read the Google Sheets response."
-        );
-      }
-
-      const json = JSON.parse(match[1]);
-
-      if (!json.table || !json.table.rows) {
-        throw new Error(
-          "Google Sheets returned no table data."
-        );
-      }
-
-      const rows = json.table.rows;
-
-
-      // =====================================================
-      // READ HEADERS FROM GOOGLE'S COLUMN METADATA
-      // (gviz splits the header row out into json.table.cols,
-      // so rows[] only ever contains actual product data)
-      // =====================================================
-
-      if (!json.table.cols || json.table.cols.length === 0) {
-        throw new Error(
-          "The Google Sheet has no columns."
-        );
-      }
-
-      const headers = json.table.cols.map(col => {
-        return String(col.label || "").trim().toLowerCase();
+      results.forEach(result => {
+        if (result.status === "fulfilled") products.push(...result.value);
+        else errors.push(result.reason.message);
       });
 
-      console.log("Detected headers:", headers);
+      if (errors.length) console.error("Sheet errors:", errors);
 
-
-      // =====================================================
-      // FIND COLUMNS
-      // =====================================================
-
-      const idx = {
-        image: headers.indexOf("image"),
-        name: headers.indexOf("name"),
-        description: headers.indexOf("description"),
-        price: headers.indexOf("price")
-      };
-
-
-      console.log("Column indexes:", idx);
-
-
-      // Name and price are required
-      if (
-        idx.name === -1 ||
-        idx.price === -1
-      ) {
-
-        throw new Error(
-          `Couldn't find Name and Price columns. Detected headers: ${headers.join(", ") || "(none — is row 1 blank?)"}`
-        );
+      // every requested tab failed -> show the error
+      if (errors.length === toLoad.length) {
+        throw new Error(errors.join(" | "));
       }
-
-
-      // =====================================================
-      // READ PRODUCTS (every row here is real data,
-      // no header row to skip)
-      // =====================================================
-
-      const products = rows
-        .map((row, index) => {
-
-          function get(columnIndex) {
-
-            if (
-              columnIndex === -1 ||
-              !row.c ||
-              !row.c[columnIndex]
-            ) {
-              return "";
-            }
-
-            return row.c[columnIndex].f ??
-                   row.c[columnIndex].v ??
-                   "";
-          }
-
-
-          const image =
-            String(get(idx.image)).trim();
-
-          const name =
-            String(get(idx.name)).trim();
-
-          const description =
-            String(get(idx.description)).trim();
-
-          const price =
-            parseFloat(
-              String(get(idx.price))
-                .replace(/[^0-9.-]/g, "")
-            );
-
-
-          return {
-            key: "p" + (index + 1),
-            image: image,
-            name: name,
-            description: description,
-            price: Number.isFinite(price)
-              ? price
-              : 0
-          };
-
-        })
-        .filter(product => {
-
-          return product.name !== "";
-
-        });
-
-
-      // =====================================================
-      // NO PRODUCTS
-      // =====================================================
 
       if (products.length === 0) {
-
-        statusEl.textContent =
-          "The sheet loaded, but no product rows were found.";
-
+        statusEl.textContent = "No products in this category yet.";
         return;
       }
-
-
-      // =====================================================
-      // DISPLAY PRODUCTS
-      // =====================================================
 
       console.log("Products loaded:", products);
 
       renderProducts(products);
 
       statusEl.style.display = "none";
-
       gridEl.style.display = "grid";
 
     }
 
     catch (error) {
 
-      console.error(
-        "Google Sheets loading error:",
-        error
-      );
+      console.error("Google Sheets loading error:", error);
 
       statusEl.classList.add("error");
-
       statusEl.innerHTML =
         "⚠️ Couldn't load inventory" +
         "<br>" +
@@ -293,7 +312,9 @@
           <img
             src="${escapeAttribute(product.image)}"
             alt="${escapeAttribute(product.name)}"
-            onerror="this.parentElement.innerHTML='<span class=&quot;fallback&quot;>no image</span>'"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            onerror="console.warn('Image failed to load:', this.src); this.parentElement.innerHTML='<span class=&quot;fallback&quot;>no image</span>'"
           >
         `
         : `
@@ -313,7 +334,7 @@
           <div class="tag-body">
 
             <span class="sku">
-              SKU-${product.key.toUpperCase()}
+              SKU-${escapeHtml(product.sku)}
             </span>
 
             <h3 class="tag-name">
@@ -381,6 +402,7 @@
   // START
   // =========================================================
 
+  setupHeader();
   loadProducts();
 
 </script>

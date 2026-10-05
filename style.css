@@ -100,6 +100,10 @@ nav.solid{
 }
 .nav-links a:hover::after{width:100%;}
 .nav-right{display:flex;align-items:center;gap:24px;}
+/* home page: equal-width sides so the links sit in the true center */
+#siteNav .brand,
+#siteNav .nav-right{flex:1;}
+#siteNav .nav-right{justify-content:flex-end;}
 .nav-icon-btn{
   width:36px;height:36px;
   border:1px solid rgba(236,231,218,0.25);
@@ -294,6 +298,28 @@ footer{
   text-transform:uppercase;
   margin-top:4px;
 }
+
+/* hero arrows */
+.hero-arrow{
+  position:absolute;top:50%;z-index:3;
+  transform:translateY(-50%);
+  width:48px;height:48px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(10,10,10,0.35);
+  border:1px solid rgba(236,231,218,0.25);
+  color:var(--text-primary);
+  cursor:pointer;
+  backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+  transition:border-color .2s, background .2s;
+}
+.hero-arrow:hover{
+  border-color:var(--accent-red-bright);
+  background:rgba(69,10,4,0.55);
+}
+.hero-arrow svg{width:20px;height:20px;}
+.hero-arrow-prev{left:24px;}
+.hero-arrow-next{right:24px;}
 
 /* ---------- NVG / IMAGE BLOCK ---------- */
 .nvg-section{
@@ -677,6 +703,9 @@ main{padding:60px 0 120px;}
   .wrap{padding:0 22px;}
   nav{padding:18px 22px;}
   .hero{margin-top:72px;min-height:calc(100vh - 72px);}
+  .hero-arrow{width:38px;height:38px;}
+  .hero-arrow-prev{left:12px;}
+  .hero-arrow-next{right:12px;}
   .grid-4{grid-template-columns:1fr;}
   .foot-grid{grid-template-columns:1fr;}
   .cta-strip{flex-direction:column;align-items:flex-start;}
@@ -684,3 +713,19 @@ main{padding:60px 0 120px;}
   .page-head{margin-top:78px;padding:50px 0 34px;}
   .page-catalog .brand-sub{display:none;}
 }
+
+/* ---------- CATALOG CATEGORY FILTER ---------- */
+.filters{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px;}
+.filters a{
+  font-family:'JetBrains Mono',monospace;
+  font-size:12px;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:var(--text-primary);
+  padding:9px 16px;
+  border:1px solid var(--border-red);
+  background:var(--bg-panel);
+  transition:border-color .18s ease, background .18s ease;
+}
+.filters a:hover{border-color:var(--accent-red-bright);}
+.filters a.active{background:var(--accent-red-bright);border-color:var(--accent-red-bright);color:#fff;}

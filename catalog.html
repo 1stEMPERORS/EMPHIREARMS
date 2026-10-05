@@ -29,12 +29,18 @@
       <span class="brand-sub">Daemones Imperatoris</span>
     </div>
   </a>
+  <div class="nav-right">
+    <a class="back-link" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+      Back to site
+    </a>
+  </div>
 </nav>
 
 <div class="page-head">
   <div class="wrap">
-    <h1 id="pageTitle">Catalog</h1>
-    <div class="filters" id="filters"></div>
+    <span class="tag">Full Inventory</span>
+    <h1 id="categoryTitle">Catalog</h1>
   </div>
 </div>
 
@@ -51,22 +57,30 @@
 
   const SHEET_ID = "1n_DzAbTaOSeER8H_eTRhymuwwSvFFkMZ7H1FrZko1jw";
 
-  // One tab (sheet) per category.
-  //   key   -> what goes after ?category= in the URL
-  //   tab   -> the EXACT name of the tab at the bottom of your Google Sheet
-  //   label -> what shows on the page
-  //   sku   -> prefix for the SKU label
-  const CATEGORIES = [
-    { key: "airsoft",     tab: "Airsoft Guns", label: "Airsoft Guns", sku: "AIR" },
-    { key: "gear",        tab: "Gear",         label: "Gear",         sku: "GEAR" },
-    { key: "emps",        tab: "EMPS Vision",  label: "EMPS Vision",  sku: "EMPS" },
-    { key: "accessories", tab: "Accessories",  label: "Accessories",  sku: "ACC" }
-  ];
+  // Each category maps to a tab in the Google Sheet.
+  // "sheet" must match the tab's name EXACTLY (spelling, spaces, capitals).
+  const CATEGORIES = {
+    "airsoft-guns": { label: "Airsoft Guns", sheet: "Airsoft Guns" },
+    "gear":         { label: "Gear",         sheet: "Gear" },
+    "emps-vision":  { label: "EMPS Vision",  sheet: "EMPS Vision" },
+    "accessories":  { label: "Accessories",  sheet: "Accessories" }
+  };
 
-  // catalog.html?category=gear  -> only Gear
-  // catalog.html                -> everything
-  const requestedKey = new URLSearchParams(location.search).get("category");
-  const activeCategory = CATEGORIES.find(c => c.key === requestedKey) || null;
+  // Used when catalog.html is opened without ?category=... (or with an unknown one)
+  const DEFAULT_CATEGORY = "airsoft-guns";
+
+  // catalog.html?category=gear  ->  "gear"
+  const requestedCategory =
+    new URLSearchParams(window.location.search).get("category");
+
+  const categoryKey =
+    CATEGORIES[requestedCategory] ? requestedCategory : DEFAULT_CATEGORY;
+
+  const category = CATEGORIES[categoryKey];
+  const SHEET_NAME = category.sheet;
+
+  document.title = category.label + " — EMPHIREARMS";
+  document.getElementById("categoryTitle").textContent = category.label;
 
 
   // =========================================================
@@ -75,32 +89,6 @@
 
   const statusEl = document.getElementById("status");
   const gridEl = document.getElementById("grid");
-
-
-  // =========================================================
-  // IMAGE URL CLEANUP
-  // Turns the things people paste into a sheet into a real image URL
-  // =========================================================
-
-  function resolveImageUrl(raw) {
-    let url = String(raw || "").trim();
-    if (!url) return "";
-
-    // =IMAGE("https://...") formula text
-    const formula = url.match(/^=?IMAGE\(\s*"([^"]+)"/i);
-    if (formula) url = formula[1];
-
-    // Google Drive share links -> direct thumbnail
-    // (the normal share link is a web page, not an image, so <img> can't show it)
-    const drive =
-      url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/) ||
-      url.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:[^#]*&)?id=([^&#]+)/);
-    if (drive) {
-      return `https://drive.google.com/thumbnail?id=${drive[1]}&sz=w1000`;
-    }
-
-    return url;
-  }
 
 
   // =========================================================
@@ -121,176 +109,226 @@
 
 
   // =========================================================
-  // LOAD ONE SHEET TAB
+  // IMAGE URL
+  // Turns whatever is in the sheet's Image column into something
+  // an <img> tag can actually display.
   // =========================================================
 
-  async function loadCategory(category) {
+  function imageUrl(raw) {
+    const url = String(raw).trim();
 
-    const url =
-      `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(category.tab)}`;
-
-    const response = await fetch(url, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(
-        `"${category.tab}": Google Sheets returned HTTP ${response.status}.`
-      );
+    if (!url) {
+      return "";
     }
 
-    const text = await response.text();
-
-    // Google wraps the JSON in: google.visualization.Query.setResponse(...)
-    const match = text.match(
-      /google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/
+    // Google Drive share links (…/file/d/ID/view, open?id=ID, uc?id=ID)
+    // are web pages, not images — convert them to a direct image URL.
+    const drive = url.match(
+      /drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[^#]*&)?id=)([\w-]+)/
     );
 
-    if (!match) {
-      console.error("Google response:", text);
-      throw new Error(`"${category.tab}": could not read the Google Sheets response.`);
+    if (drive) {
+      return `https://drive.google.com/thumbnail?id=${drive[1]}&sz=w1000`;
     }
 
-    const json = JSON.parse(match[1]);
-
-    // If a tab name doesn't exist, Google quietly returns the FIRST tab
-    // instead of an error, so also check for explicit error status.
-    if (json.status === "error") {
-      const msg = (json.errors && json.errors[0] && json.errors[0].detailed_message) || "unknown error";
-      throw new Error(`"${category.tab}": ${msg}`);
+    // Protocol-less links like //example.com/pic.jpg
+    if (url.startsWith("//")) {
+      return "https:" + url;
     }
 
-    if (!json.table || !json.table.rows || !json.table.cols || json.table.cols.length === 0) {
-      throw new Error(`"${category.tab}": the tab has no table data.`);
-    }
-
-    let headers = json.table.cols.map(col =>
-      String(col.label || "").trim().toLowerCase()
-    );
-    let dataRows = json.table.rows;
-
-    // Google sometimes fails to detect the header row; use row 1 instead
-    if (headers.every(h => h === "") && dataRows.length) {
-      const first = dataRows[0].c || [];
-      headers = json.table.cols.map((_, i) =>
-        String((first[i] && (first[i].v ?? first[i].f)) || "").trim().toLowerCase()
-      );
-      dataRows = dataRows.slice(1);
-    }
-
-    const idx = {
-      image: headers.indexOf("image"),
-      name: headers.indexOf("name"),
-      description: headers.indexOf("description"),
-      price: headers.indexOf("price")
-    };
-
-    if (idx.name === -1 || idx.price === -1) {
-      throw new Error(
-        `"${category.tab}": couldn't find Name and Price columns. Detected headers: ${headers.join(", ") || "(none — is row 1 blank?)"}`
-      );
-    }
-
-    return dataRows
-      .map((row, index) => {
-
-        function get(columnIndex) {
-          if (columnIndex === -1 || !row.c || !row.c[columnIndex]) return "";
-          const cell = row.c[columnIndex];
-          // for images prefer the raw value (v); for others the formatted one (f)
-          return columnIndex === idx.image
-            ? (cell.v ?? cell.f ?? "")
-            : (cell.f ?? cell.v ?? "");
-        }
-
-        const price = parseFloat(String(get(idx.price)).replace(/[^0-9.-]/g, ""));
-
-        return {
-          sku: `${category.sku}-${String(index + 1).padStart(3, "0")}`,
-          category: category.key,
-          image: resolveImageUrl(get(idx.image)),
-          name: String(get(idx.name)).trim(),
-          description: String(get(idx.description)).trim(),
-          price: Number.isFinite(price) ? price : 0
-        };
-      })
-      .filter(product => product.name !== "");
+    return url;
   }
 
 
   // =========================================================
-  // FILTER BAR + PAGE TITLE
-  // =========================================================
-
-  function setupHeader() {
-
-    const links = [
-      `<a href="catalog.html" class="${activeCategory ? "" : "active"}">All</a>`
-    ].concat(
-      CATEGORIES.map(c =>
-        `<a href="catalog.html?category=${c.key}" class="${activeCategory === c ? "active" : ""}">${escapeHtml(c.label)}</a>`
-      )
-    );
-
-    document.getElementById("filters").innerHTML = links.join("");
-
-    if (activeCategory) {
-      document.getElementById("pageTitle").textContent = activeCategory.label;
-      document.title = `${activeCategory.label} — EMPHIREARMS`;
-    }
-  }
-
-
-  // =========================================================
-  // LOAD PRODUCTS (one category, or all four)
+  // LOAD PRODUCTS
   // =========================================================
 
   async function loadProducts() {
 
     statusEl.classList.remove("error");
-    statusEl.style.display = "";
-    gridEl.style.display = "none";
     statusEl.textContent = "Loading products from Google Sheets...";
 
-    const toLoad = activeCategory ? [activeCategory] : CATEGORIES;
+    const url =
+      `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
 
     try {
 
-      // load all needed tabs at the same time
-      const results = await Promise.allSettled(toLoad.map(loadCategory));
+      const response = await fetch(url, { cache: "no-store" });
 
-      const products = [];
-      const errors = [];
+      if (!response.ok) {
+        throw new Error(
+          `Google Sheets returned HTTP ${response.status}.`
+        );
+      }
 
-      results.forEach(result => {
-        if (result.status === "fulfilled") products.push(...result.value);
-        else errors.push(result.reason.message);
+      const text = await response.text();
+
+      // Google wraps the JSON response in:
+      // google.visualization.Query.setResponse(...)
+      const match = text.match(
+        /google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/
+      );
+
+      if (!match) {
+        console.error("Google response:", text);
+
+        throw new Error(
+          "Could not read the Google Sheets response."
+        );
+      }
+
+      const json = JSON.parse(match[1]);
+
+      if (!json.table || !json.table.rows) {
+        throw new Error(
+          "Google Sheets returned no table data."
+        );
+      }
+
+      const rows = json.table.rows;
+
+
+      // =====================================================
+      // READ HEADERS FROM GOOGLE'S COLUMN METADATA
+      // (gviz splits the header row out into json.table.cols,
+      // so rows[] only ever contains actual product data)
+      // =====================================================
+
+      if (!json.table.cols || json.table.cols.length === 0) {
+        throw new Error(
+          "The Google Sheet has no columns."
+        );
+      }
+
+      const headers = json.table.cols.map(col => {
+        return String(col.label || "").trim().toLowerCase();
       });
 
-      if (errors.length) console.error("Sheet errors:", errors);
+      console.log("Detected headers:", headers);
 
-      // every requested tab failed -> show the error
-      if (errors.length === toLoad.length) {
-        throw new Error(errors.join(" | "));
+
+      // =====================================================
+      // FIND COLUMNS
+      // =====================================================
+
+      const idx = {
+        image: headers.indexOf("image"),
+        name: headers.indexOf("name"),
+        description: headers.indexOf("description"),
+        price: headers.indexOf("price")
+      };
+
+
+      console.log("Column indexes:", idx);
+
+
+      // Name and price are required
+      if (
+        idx.name === -1 ||
+        idx.price === -1
+      ) {
+
+        throw new Error(
+          `Couldn't find Name and Price columns. Detected headers: ${headers.join(", ") || "(none — is row 1 blank?)"}`
+        );
       }
+
+
+      // =====================================================
+      // READ PRODUCTS (every row here is real data,
+      // no header row to skip)
+      // =====================================================
+
+      const products = rows
+        .map((row, index) => {
+
+          function get(columnIndex) {
+
+            if (
+              columnIndex === -1 ||
+              !row.c ||
+              !row.c[columnIndex]
+            ) {
+              return "";
+            }
+
+            return row.c[columnIndex].f ??
+                   row.c[columnIndex].v ??
+                   "";
+          }
+
+
+          const image =
+            String(get(idx.image)).trim();
+
+          const name =
+            String(get(idx.name)).trim();
+
+          const description =
+            String(get(idx.description)).trim();
+
+          const price =
+            parseFloat(
+              String(get(idx.price))
+                .replace(/[^0-9.-]/g, "")
+            );
+
+
+          return {
+            key: "p" + (index + 1),
+            image: image,
+            name: name,
+            description: description,
+            price: Number.isFinite(price)
+              ? price
+              : 0
+          };
+
+        })
+        .filter(product => {
+
+          return product.name !== "";
+
+        });
+
+
+      // =====================================================
+      // NO PRODUCTS
+      // =====================================================
 
       if (products.length === 0) {
-        statusEl.textContent = "No products in this category yet.";
+
+        statusEl.textContent =
+          "The sheet loaded, but no product rows were found.";
+
         return;
       }
+
+
+      // =====================================================
+      // DISPLAY PRODUCTS
+      // =====================================================
 
       console.log("Products loaded:", products);
 
       renderProducts(products);
 
       statusEl.style.display = "none";
+
       gridEl.style.display = "grid";
 
     }
 
     catch (error) {
 
-      console.error("Google Sheets loading error:", error);
+      console.error(
+        "Google Sheets loading error:",
+        error
+      );
 
       statusEl.classList.add("error");
+
       statusEl.innerHTML =
         "⚠️ Couldn't load inventory" +
         "<br>" +
@@ -309,12 +347,13 @@
 
     gridEl.innerHTML = products.map(product => {
 
-      const imageHTML = product.image
+      const imageSrc = imageUrl(product.image);
+
+      const imageHTML = imageSrc
         ? `
           <img
-            src="${escapeAttribute(product.image)}"
+            src="${escapeAttribute(imageSrc)}"
             alt="${escapeAttribute(product.name)}"
-            loading="lazy"
             referrerpolicy="no-referrer"
             onerror="console.warn('Image failed to load:', this.src); this.parentElement.innerHTML='<span class=&quot;fallback&quot;>no image</span>'"
           >
@@ -336,7 +375,7 @@
           <div class="tag-body">
 
             <span class="sku">
-              SKU-${escapeHtml(product.sku)}
+              SKU-${product.key.toUpperCase()}
             </span>
 
             <h3 class="tag-name">
@@ -404,7 +443,6 @@
   // START
   // =========================================================
 
-  setupHeader();
   loadProducts();
 
 </script>

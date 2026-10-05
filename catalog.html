@@ -64,9 +64,9 @@
   //   label -> what shows on the page
   //   sku   -> prefix for the SKU label
   const CATEGORIES = [
-    { key: "airsoft",     tab: "Airsoft Guns", label: "Airsoft Guns", sku: "AIR" },
+    { key: "airsoft",     tab: "Airsoft_Guns", label: "Airsoft Guns", sku: "AIR" },
     { key: "gear",        tab: "Gear",         label: "Gear",         sku: "GEAR" },
-    { key: "emps",        tab: "EMPS Vision",  label: "EMPS Vision",  sku: "EMPS" },
+    { key: "emps",        tab: "NVG",  label: "EMPS Vision",  sku: "EMPS" },
     { key: "accessories", tab: "Accessories",  label: "Accessories",  sku: "ACC" }
   ];
 
@@ -104,6 +104,15 @@
       url.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:[^#]*&)?id=([^&#]+)/);
     if (drive) {
       return `https://drive.google.com/thumbnail?id=${drive[1]}&sz=w1000`;
+    }
+
+    // Single imgur page (imgur.com/AbC123) -> direct image.
+    // Album links (imgur.com/a/...) can't be converted: they hold many images.
+    const imgur = url.match(/^https?:\/\/(?:www\.)?imgur\.com\/(?!a\/|gallery\/)([A-Za-z0-9]+)\/?$/);
+    if (imgur) return `https://i.imgur.com/${imgur[1]}.jpg`;
+
+    if (/imgur\.com\/(a|gallery)\//.test(url)) {
+      console.warn("Imgur ALBUM link won't display as an image. Use the direct link (i.imgur.com/XXXX.jpg):", url);
     }
 
     return url;

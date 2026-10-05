@@ -143,13 +143,10 @@ footer{
   padding:80px 0 30px;
   border-top:1px solid var(--border-red);
 }
-footer .wrap{max-width:none;padding:0 40px;} /* full width, lines up with the nav */
 .foot-grid{
   display:grid;
-  grid-template-columns:1fr auto auto auto; /* logo takes the left, link columns sit on the right */
-  column-gap:80px;
-  row-gap:40px;
-  align-items:start;
+  grid-template-columns:1.4fr 1fr 1fr 1fr;
+  gap:50px;
   padding-bottom:60px;
   border-bottom:1px solid var(--border-red);
 }
@@ -699,7 +696,7 @@ main{padding:60px 0 120px;}
   .grid-4{grid-template-columns:repeat(2,1fr);}
   .nvg-inner,.about-inner{grid-template-columns:1fr;}
   .nvg-visual{justify-self:stretch;}
-  .foot-grid{grid-template-columns:1fr 1fr;column-gap:40px;}
+  .foot-grid{grid-template-columns:1fr 1fr;}
   .hero-specs{display:none;}
 }
 @media(max-width:560px){
